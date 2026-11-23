@@ -32,3 +32,6 @@ _ReSharper*/
 .idea/
 .vs/
 *.pubxml
+
+# Bundled image optimizer executable
+!src/MetadataImageOptimizer/ImageOptimizer.exe

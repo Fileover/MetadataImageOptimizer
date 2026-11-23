@@ -11,8 +11,7 @@
     <None Include="icon.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="..\..\..\ImageOptimizer.exe" Condition="Exists('..\..\..\ImageOptimizer.exe')">
-      <Link>ImageOptimizer.exe</Link>
+    <None Update="ImageOptimizer.exe">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
