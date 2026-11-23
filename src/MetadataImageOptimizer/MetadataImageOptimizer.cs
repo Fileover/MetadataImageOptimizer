@@ -3,12 +3,14 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Windows.Controls;
 using MetadataImageOptimizer.Addons;
 using MetadataImageOptimizer.Addons.BackgroundChanger;
 using MetadataImageOptimizer.Helpers;
 using MetadataImageOptimizer.Models;
+using MetadataImageOptimizer.Services;
 using MetadataImageOptimizer.Settings;
 using MetadataImageOptimizer.Views;
 using Playnite.SDK;
@@ -24,18 +26,30 @@ namespace MetadataImageOptimizer
 
         private readonly IPlayniteAPI api;
         private readonly List<SupportedAddonBase> supportedAddons;
+        private readonly ImageOptimizerCli imageOptimizerCli;
 
         private MetadataImageOptimizerSettingsViewModel settingsVm { get; set; }
         private Guid inProcessGameId;
 
         public override Guid Id { get; } = Guid.Parse("17b571ff-6ffe-4bea-ad25-32e52b54f9d3");
 
+        public ImageOptimizerCli OptimizerCli => imageOptimizerCli;
+
+        public IPlayniteAPI Api => api;
+
         public MetadataImageOptimizer(IPlayniteAPI api) : base(api)
         {
             this.api = api;
             settingsVm = new MetadataImageOptimizerSettingsViewModel(this);
-            supportedAddons = new List<SupportedAddonBase> { new BackgroundChangerOptimizer(api, settingsVm) };
+            imageOptimizerCli = new ImageOptimizerCli(() => settingsVm.Settings, GetPluginFolder());
+            supportedAddons = new List<SupportedAddonBase> { new BackgroundChangerOptimizer(api, settingsVm, imageOptimizerCli) };
             Properties = new GenericPluginProperties { HasSettings = true };
+        }
+
+        public static string GetPluginFolder()
+        {
+            var assemblyPath = Assembly.GetExecutingAssembly().Location;
+            return string.IsNullOrWhiteSpace(assemblyPath) ? null : Path.GetDirectoryName(assemblyPath);
         }
 
         public override IEnumerable<GameMenuItem> GetGameMenuItems(GetGameMenuItemsArgs args)
@@ -85,6 +99,16 @@ namespace MetadataImageOptimizer
             base.OnApplicationStarted(args);
 
             OptimizationCacheHelper.Load(api, GetPluginUserDataPath());
+
+            if (!imageOptimizerCli.IsAvailable)
+            {
+                logger.Error($"'{ImageOptimizerCli.ExecutableName}' was not found. Image optimization is unavailable until it is provided.");
+                api.Notifications.Add(
+                    "metadataimageoptimizer-cli-missing"
+                    , $"'{ImageOptimizerCli.ExecutableName}' was not found, so images will not be optimized.\n"
+                        + "Place it next to the extension or set its path in the add-on settings."
+                    , NotificationType.Error);
+            }
 
             if (File.Exists(BackgroundOptimizeQueueFilePath))
             {
@@ -233,6 +257,22 @@ namespace MetadataImageOptimizer
 
         private void OptimizeGame(Guid gameId, bool optimizeBackground, bool optimizeCover, bool optimizeIcon)
         {
+            // The database update at the end of this method raises ItemUpdated for the same game.
+            // Without this guard that update would start another optimization of the same images.
+            var previousGameId = inProcessGameId;
+            inProcessGameId = gameId;
+            try
+            {
+                OptimizeGameImages(gameId, optimizeBackground, optimizeCover, optimizeIcon);
+            }
+            finally
+            {
+                inProcessGameId = previousGameId;
+            }
+        }
+
+        private void OptimizeGameImages(Guid gameId, bool optimizeBackground, bool optimizeCover, bool optimizeIcon)
+        {
             var pathsChanged = false;
             var optimizerSettings = settingsVm.Settings;
 
@@ -259,7 +299,7 @@ namespace MetadataImageOptimizer
                 try
                 {
                     var backgroundPath = api.Database.GetFullFilePath(game.BackgroundImage);
-                    newBackgroundPath = ImageOptimizer.Optimize(backgroundPath, optimizerSettings.Background, optimizerSettings.Quality);
+                    newBackgroundPath = ImageOptimizer.Optimize(backgroundPath, optimizerSettings.Background, optimizerSettings.Quality, imageOptimizerCli);
                 }
                 catch (Exception ex)
                 {
@@ -272,7 +312,7 @@ namespace MetadataImageOptimizer
                 try
                 {
                     var coverPath = api.Database.GetFullFilePath(game.CoverImage);
-                    newCoverPath = ImageOptimizer.Optimize(coverPath, optimizerSettings.Cover, optimizerSettings.Quality);
+                    newCoverPath = ImageOptimizer.Optimize(coverPath, optimizerSettings.Cover, optimizerSettings.Quality, imageOptimizerCli);
                 }
                 catch (Exception ex)
                 {
@@ -285,7 +325,7 @@ namespace MetadataImageOptimizer
                 try
                 {
                     var iconPath = api.Database.GetFullFilePath(game.Icon);
-                    newIconPath = ImageOptimizer.Optimize(iconPath, optimizerSettings.Icon, optimizerSettings.Quality);
+                    newIconPath = ImageOptimizer.Optimize(iconPath, optimizerSettings.Icon, optimizerSettings.Quality, imageOptimizerCli);
                 }
                 catch (Exception ex)
                 {

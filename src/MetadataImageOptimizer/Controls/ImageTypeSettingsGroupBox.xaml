@@ -5,7 +5,7 @@
   xmlns:locals="clr-namespace:MetadataImageOptimizer.Controls"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
   d:DataContext="{d:DesignInstance locals:ImageTypeSettingsGroupBox}"
-  d:DesignHeight="150"
+  d:DesignHeight="170"
   d:DesignWidth="250"
   mc:Ignorable="d">
   <UserControl.Resources>
@@ -24,6 +24,7 @@
   <GroupBox Header="{Binding Header, RelativeSource={RelativeSource AncestorType=UserControl}}">
     <Grid Margin="5">
       <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
         <RowDefinition Height="Auto" />
         <RowDefinition Height="Auto" />
         <RowDefinition Height="Auto" />
@@ -69,6 +70,15 @@
           IsEnabled="{Binding Settings.Optimize, RelativeSource={RelativeSource AncestorType=UserControl}}"
           Text="{Binding Settings.MaxHeight, RelativeSource={RelativeSource AncestorType=UserControl}}" />
       </StackPanel>
+
+      <CheckBox Grid.Row="3"
+        Grid.Column="0"
+        Grid.ColumnSpan="2"
+        Margin="0,8,0,0"
+        Content="Lossless"
+        IsChecked="{Binding Settings.Lossless, RelativeSource={RelativeSource AncestorType=UserControl}}"
+        IsEnabled="{Binding Settings.Optimize, RelativeSource={RelativeSource AncestorType=UserControl}}"
+        ToolTip="Recompress without changing any pixel. Ignored when the target format is JPEG, which is always lossy." />
     </Grid>
   </GroupBox>
 </UserControl>

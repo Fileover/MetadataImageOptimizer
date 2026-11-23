@@ -20,80 +20,175 @@
       </Style.Setters>
     </Style>
   </UserControl.Resources>
-  <Grid Margin="15">
-    <Grid.RowDefinitions>
-      <RowDefinition Height="Auto" />
-      <RowDefinition Height="Auto" />
-      <RowDefinition Height="Auto" />
-      <RowDefinition Height="Auto" />
-    </Grid.RowDefinitions>
-    <Grid.ColumnDefinitions>
-      <ColumnDefinition Width="Auto" />
-      <ColumnDefinition Width="Auto" />
-      <ColumnDefinition Width="Auto" />
-    </Grid.ColumnDefinitions>
+  <StackPanel Margin="15">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+      </Grid.RowDefinitions>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
 
-    <TextBlock Grid.Row="0"
-      Grid.Column="0"
-      Margin="0,0,20,0"
-      Text="JPG Quality:" />
-    <TextBox Grid.Row="0"
-      Grid.Column="1"
-      MinWidth="50"
-      Margin="0,0,10,0"
-      Text="{Binding Settings.Quality.JpgQuality}" />
-    <TextBlock Grid.Row="0"
-      Grid.Column="2"
-      FontFamily="{DynamicResource FontIcoFont}"
-      Text="&#xefca;"
-      ToolTip="Defines the quality of converted JPG images. 1 (worst) to 100 (best). Defaults to 90" />
+      <TextBlock Grid.Row="0"
+        Grid.Column="0"
+        Margin="0,0,20,0"
+        Text="JPG Quality:" />
+      <TextBox Grid.Row="0"
+        Grid.Column="1"
+        MinWidth="50"
+        Margin="0,0,10,0"
+        Text="{Binding Settings.Quality.JpgQuality}" />
+      <TextBlock Grid.Row="0"
+        Grid.Column="2"
+        FontFamily="{DynamicResource FontIcoFont}"
+        Text="&#xefca;"
+        ToolTip="Quality of JPG output. 1 (worst) to 100 (best). Defaults to 90. Ignored when 'Lossless' is enabled and the source is a JPG." />
 
-    <TextBlock Grid.Row="1"
-      Grid.Column="0"
-      Margin="0,10,20,0"
-      Text="PNG Compression Level:" />
-    <ComboBox Grid.Row="1"
-      Grid.Column="1"
-      MinWidth="100"
-      Margin="0,10,10,0"
-      DisplayMemberPath="Value"
-      ItemsSource="{Binding Settings.Quality.AvailablePngCompressionLevels}"
-      SelectedValue="{Binding Settings.Quality.PngCompressionLevel}"
-      SelectedValuePath="Key" />
+      <TextBlock Grid.Row="1"
+        Grid.Column="0"
+        Margin="0,10,20,0"
+        Text="PNG Preset:" />
+      <ComboBox Grid.Row="1"
+        Grid.Column="1"
+        MinWidth="100"
+        Margin="0,10,10,0"
+        DisplayMemberPath="Value"
+        ItemsSource="{Binding Settings.Quality.AvailablePngPresets}"
+        SelectedValue="{Binding Settings.Quality.PngPreset}"
+        SelectedValuePath="Key" />
+      <TextBlock Grid.Row="1"
+        Grid.Column="2"
+        Margin="0,10,0,0"
+        FontFamily="{DynamicResource FontIcoFont}"
+        Text="&#xefca;"
+        ToolTip="OxiPNG compression preset for PNG output. Higher presets take longer and produce smaller files. Defaults to 4." />
 
-    <TextBlock Grid.Row="2"
-      Grid.Column="0"
-      Margin="0,10,20,0"
-      Text="WebP Encoding Method:" />
-    <ComboBox Grid.Row="2"
-      Grid.Column="1"
-      MinWidth="100"
-      Margin="0,10,10,0"
-      DisplayMemberPath="Value"
-      ItemsSource="{Binding Settings.Quality.AvailableWebpEncodingMethods}"
-      SelectedValue="{Binding Settings.Quality.WebpEncodingMethod}"
-      SelectedValuePath="Key" />
-    <TextBlock Grid.Row="2"
-      Grid.Column="2"
-      Margin="0,10,0,0"
-      FontFamily="{DynamicResource FontIcoFont}"
-      Text="&#xefca;"
-      ToolTip="Defines the method used when encoding WebP images. Slower methods take longer but generate smaller/better images." />
+      <TextBlock Grid.Row="2"
+        Grid.Column="0"
+        Margin="0,10,20,0"
+        Text="WebP Quality:" />
+      <TextBox Grid.Row="2"
+        Grid.Column="1"
+        MinWidth="50"
+        Margin="0,10,10,0"
+        Text="{Binding Settings.Quality.WebpQuality}" />
+      <TextBlock Grid.Row="2"
+        Grid.Column="2"
+        Margin="0,10,0,0"
+        FontFamily="{DynamicResource FontIcoFont}"
+        Text="&#xefca;"
+        ToolTip="Compression quality of WebP output. 0 (worst) to 100 (best). Defaults to 90. Ignored when 'Lossless' is enabled." />
 
-    <TextBlock Grid.Row="3"
-      Grid.Column="0"
-      Margin="0,10,20,0"
-      Text="WebP Quality:" />
-    <TextBox Grid.Row="3"
-      Grid.Column="1"
-      MinWidth="50"
-      Margin="0,10,10,0"
-      Text="{Binding Settings.Quality.WebpQuality}" />
-    <TextBlock Grid.Row="3"
-      Grid.Column="2"
-      Margin="0,10,0,0"
-      FontFamily="{DynamicResource FontIcoFont}"
-      Text="&#xefca;"
-      ToolTip="Defines the compression quality of converted WebP images. 0 (worst) to 100 (best). Defaults to 90" />
-  </Grid>
+      <TextBlock Grid.Row="3"
+        Grid.Column="0"
+        Margin="0,10,20,0"
+        Text="WebP Method:" />
+      <ComboBox Grid.Row="3"
+        Grid.Column="1"
+        MinWidth="100"
+        Margin="0,10,10,0"
+        DisplayMemberPath="Value"
+        ItemsSource="{Binding Settings.Quality.AvailableWebpMethods}"
+        SelectedValue="{Binding Settings.Quality.WebpMethod}"
+        SelectedValuePath="Key" />
+      <TextBlock Grid.Row="3"
+        Grid.Column="2"
+        Margin="0,10,0,0"
+        FontFamily="{DynamicResource FontIcoFont}"
+        Text="&#xefca;"
+        ToolTip="Compression method used for WebP output. Slower methods take longer but generate smaller images." />
+    </Grid>
+
+    <GroupBox Margin="0,15,0,0" Header="JPEG XL">
+      <Grid Margin="5">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Grid.Row="0"
+          Grid.Column="0"
+          Margin="0,0,20,0"
+          Text="Distance:" />
+        <TextBox Grid.Row="0"
+          Grid.Column="1"
+          MinWidth="50"
+          Margin="0,0,10,0"
+          Text="{Binding Settings.Quality.JxlDistance}" />
+        <TextBlock Grid.Row="0"
+          Grid.Column="2"
+          FontFamily="{DynamicResource FontIcoFont}"
+          Text="&#xefca;"
+          ToolTip="Butteraugli distance, 0 to 25. 0 is lossless, 1 is the encoder default, higher values give smaller files. Ignored when 'Lossless' is enabled." />
+
+        <TextBlock Grid.Row="1"
+          Grid.Column="0"
+          Margin="0,10,20,0"
+          Text="Effort:" />
+        <TextBox Grid.Row="1"
+          Grid.Column="1"
+          MinWidth="50"
+          Margin="0,10,10,0"
+          Text="{Binding Settings.Quality.JxlEffort}" />
+        <TextBlock Grid.Row="1"
+          Grid.Column="2"
+          Margin="0,10,0,0"
+          FontFamily="{DynamicResource FontIcoFont}"
+          Text="&#xefca;"
+          ToolTip="Encoder effort, 1 to 11. Values above 10 are only used when the bundled executable supports expert options." />
+
+        <CheckBox Grid.Row="2"
+          Grid.Column="0"
+          Grid.ColumnSpan="2"
+          Margin="0,12,0,0"
+          Content="Use expert options"
+          IsChecked="{Binding Settings.Quality.JxlExpertOptions}" />
+        <TextBlock Grid.Row="2"
+          Grid.Column="2"
+          Margin="10,12,0,0"
+          FontFamily="{DynamicResource FontIcoFont}"
+          Text="&#xefca;"
+          ToolTip="Passes cjxl expert options (--allow-expert-options, --brotli-effort) when the executable supports them. Effort 11 requires this." />
+
+        <TextBlock Grid.Row="3"
+          Grid.Column="0"
+          Margin="0,10,20,0"
+          Text="Brotli effort:" />
+        <TextBox Grid.Row="3"
+          Grid.Column="1"
+          MinWidth="50"
+          Margin="0,10,10,0"
+          IsEnabled="{Binding Settings.Quality.JxlExpertOptions}"
+          Text="{Binding Settings.Quality.JxlBrotliEffort}" />
+        <TextBlock Grid.Row="3"
+          Grid.Column="2"
+          Margin="0,10,0,0"
+          FontFamily="{DynamicResource FontIcoFont}"
+          Text="&#xefca;"
+          ToolTip="Brotli effort used for the JPEG XL container metadata, 0 to 11. Only applied with expert options." />
+      </Grid>
+    </GroupBox>
+
+    <CheckBox Margin="0,15,0,0"
+      Content="Remove metadata (EXIF, XMP, IPTC)"
+      IsChecked="{Binding Settings.Quality.StripMetadata}"
+      ToolTip="Strips embedded metadata from optimized images. Colour profiles (ICC) are kept. Does not change any pixel." />
+
+    <CheckBox Margin="0,10,0,0"
+      Content="Use Zopfli for PNG"
+      IsChecked="{Binding Settings.Quality.UseZopfli}"
+      ToolTip="Squeezes PNG files a bit further at the cost of speed. Can take minutes per image." />
+  </StackPanel>
 </UserControl>

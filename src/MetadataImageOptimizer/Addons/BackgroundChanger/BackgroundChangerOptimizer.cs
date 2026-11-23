@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using MetadataImageOptimizer.Addons.BackgroundChanger.Model;
+using MetadataImageOptimizer.Services;
 using MetadataImageOptimizer.Settings;
 using MetadataImageOptimizer.Views;
 using Playnite.SDK;
@@ -19,16 +20,18 @@ namespace MetadataImageOptimizer.Addons.BackgroundChanger
         private readonly IPlayniteAPI api;
         private readonly string imageBasePath;
         private readonly MetadataImageOptimizerSettingsViewModel settingsVm;
+        private readonly ImageOptimizerCli imageOptimizerCli;
 
         private object backgroundChangerDb;
         private Func<Guid, bool, bool, object> getGameConfigFunc;
         private MethodInfo updateMethodInfo;
 
-        public BackgroundChangerOptimizer(IPlayniteAPI api, MetadataImageOptimizerSettingsViewModel settingsVm)
+        public BackgroundChangerOptimizer(IPlayniteAPI api, MetadataImageOptimizerSettingsViewModel settingsVm, ImageOptimizerCli imageOptimizerCli)
         {
             this.api = api;
             imageBasePath = api.Paths.ExtensionsDataPath + $@"\{ExtensionId}\Images";
             this.settingsVm = settingsVm;
+            this.imageOptimizerCli = imageOptimizerCli;
         }
 
         public override Guid ExtensionId { get; } = new Guid("3afdd02b-db6c-4b60-8faa-2971d6dfad2a");
@@ -95,7 +98,7 @@ namespace MetadataImageOptimizer.Addons.BackgroundChanger
         private void OptimizeImage(GameImage image, ImageTypeSettings imageSettings)
         {
             var imagePath = Path.Combine(imageBasePath, image.FolderName, image.Name);
-            var tmpPath = ImageOptimizer.Optimize(imagePath, imageSettings, settingsVm.Settings.Quality);
+            var tmpPath = ImageOptimizer.Optimize(imagePath, imageSettings, settingsVm.Settings.Quality, imageOptimizerCli);
             if (tmpPath == imagePath)
             {
                 return;
