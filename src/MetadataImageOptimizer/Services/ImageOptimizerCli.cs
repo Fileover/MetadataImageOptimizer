@@ -237,10 +237,18 @@ namespace MetadataImageOptimizer.Services
             if (IsPng(format))
             {
                 arguments.Append(" --png-preset ").Append(quality.PngPreset.ToString(CultureInfo.InvariantCulture));
-                if (!quality.UseZopfli)
+
+                // Zopfli became opt-in in newer builds and was the default in older ones, so only
+                // pass the switch that this executable actually understands.
+                var zopfliOption = FindOption("--zopfli");
+                var noZopfliOption = FindOption("--no-zopfli");
+                if (quality.UseZopfli && zopfliOption != null)
                 {
-                    // Zopfli needs minutes per image at realistic resolutions.
-                    arguments.Append(" --no-zopfli");
+                    arguments.Append(' ').Append(zopfliOption);
+                }
+                else if (!quality.UseZopfli && noZopfliOption != null)
+                {
+                    arguments.Append(' ').Append(noZopfliOption);
                 }
             }
 
