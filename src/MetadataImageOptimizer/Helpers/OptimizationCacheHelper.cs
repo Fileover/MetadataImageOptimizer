@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -13,48 +13,49 @@ namespace MetadataImageOptimizer.Helpers
         private const string OptimizationCacheFileName = "optimization-cache";
 
         private static readonly ILogger Logger = LogManager.GetLogger();
-        private static readonly List<OptimizationCacheItem> OptimizationCache = new List<OptimizationCacheItem>();
+        private static readonly object CacheLock = new object();
+        private static readonly Dictionary<Guid, OptimizationCacheItem> OptimizationCache = new Dictionary<Guid, OptimizationCacheItem>();
 
         private static IPlayniteAPI api;
         private static string optimizationCacheFilePath;
 
         /// <summary>
-        /// Adds the specified game to the optimization cache
+        /// Adds or updates the specified game in the optimization cache and persists changes.
         /// </summary>
         /// <param name="game">The game to add</param>
         public static void Add(Game game)
         {
             try
             {
-                // Use folder path as fallback, which will be considered a non-existent file
-                var backgroundPath = string.IsNullOrWhiteSpace(game.BackgroundImage) ? "C:\\" : api.Database.GetFullFilePath(game.BackgroundImage);
-                var backgroundFile = new FileInfo(backgroundPath);
+                var backgroundSize = GetFileSizeOrZero(game.BackgroundImage);
+                var coverSize = GetFileSizeOrZero(game.CoverImage);
+                var iconSize = GetFileSizeOrZero(game.Icon);
 
-                var coverPath = string.IsNullOrWhiteSpace(game.CoverImage) ? "C:\\" : api.Database.GetFullFilePath(game.CoverImage);
-                var coverFile = new FileInfo(coverPath);
-
-                var iconPath = string.IsNullOrWhiteSpace(game.Icon) ? "C:\\" : api.Database.GetFullFilePath(game.Icon);
-                var iconFile = new FileInfo(iconPath);
-
-                var existingCacheItem = OptimizationCache.FirstOrDefault(x => x.GameId == game.Id);
-                if (existingCacheItem != null)
+                var changed = false;
+                lock (CacheLock)
                 {
-                    OptimizationCache.Remove(existingCacheItem);
+                    if (OptimizationCache.TryGetValue(game.Id, out var existingCacheItem))
+                    {
+                        if (existingCacheItem.BackgroundFileSize != backgroundSize
+                            || existingCacheItem.CoverFileSize != coverSize
+                            || existingCacheItem.IconFileSize != iconSize)
+                        {
+                            existingCacheItem.BackgroundFileSize = backgroundSize;
+                            existingCacheItem.CoverFileSize = coverSize;
+                            existingCacheItem.IconFileSize = iconSize;
+                            changed = true;
+                        }
+                    }
+                    else
+                    {
+                        OptimizationCache[game.Id] = new OptimizationCacheItem(game.Id, backgroundSize, coverSize, iconSize);
+                        changed = true;
+                    }
 
-                    existingCacheItem.BackgroundFileSize = backgroundFile.Exists ? backgroundFile.Length : 0;
-                    existingCacheItem.CoverFileSize = coverFile.Exists ? coverFile.Length : 0;
-                    existingCacheItem.IconFileSize = iconFile.Exists ? iconFile.Length : 0;
-
-                    OptimizationCache.Add(existingCacheItem);
-                }
-                else
-                {
-                    var cacheItem = new OptimizationCacheItem(
-                        game.Id
-                        , backgroundFile.Exists ? backgroundFile.Length : 0
-                        , coverFile.Exists ? coverFile.Length : 0
-                        , iconFile.Exists ? iconFile.Length : 0);
-                    OptimizationCache.Add(cacheItem);
+                    if (changed)
+                    {
+                        SaveLocked();
+                    }
                 }
             }
             catch (Exception ex)
@@ -80,8 +81,11 @@ namespace MetadataImageOptimizer.Helpers
         /// </summary>
         public static void Clear()
         {
-            OptimizationCache.Clear();
-            Save();
+            lock (CacheLock)
+            {
+                OptimizationCache.Clear();
+                SaveLocked();
+            }
         }
 
         /// <summary>
@@ -91,10 +95,13 @@ namespace MetadataImageOptimizer.Helpers
         /// <returns><c>true</c> if the game's images should be checked; otherwise <c>false</c></returns>
         public static bool IsCheckNecessary(Game game)
         {
-            var cacheItem = OptimizationCache.FirstOrDefault(x => x.GameId == game.Id);
-            if (cacheItem == null)
+            OptimizationCacheItem cacheItem;
+            lock (CacheLock)
             {
-                return true;
+                if (!OptimizationCache.TryGetValue(game.Id, out cacheItem))
+                {
+                    return true;
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(game.BackgroundImage))
@@ -137,32 +144,34 @@ namespace MetadataImageOptimizer.Helpers
         /// <param name="pluginUserDataPath">The path where the plugin's user data is stored</param>
         public static void Load(IPlayniteAPI api, string pluginUserDataPath)
         {
-            OptimizationCacheHelper.api = api;
-
-            optimizationCacheFilePath = Path.Combine(pluginUserDataPath, OptimizationCacheFileName);
-            OptimizationCache.Clear();
-            if (!File.Exists(optimizationCacheFilePath))
+            lock (CacheLock)
             {
-                return;
-            }
+                OptimizationCacheHelper.api = api;
+                optimizationCacheFilePath = Path.Combine(pluginUserDataPath, OptimizationCacheFileName);
+                OptimizationCache.Clear();
 
-            var lines = File.ReadAllLines(optimizationCacheFilePath);
-
-            foreach (var line in lines)
-            {
-                var parts = line.Split(',');
-
-                if (parts.Length == 4 &&
-                    Guid.TryParse(parts[0], out var gameId) &&
-                    long.TryParse(parts[1], out var backgroundFileSize) &&
-                    long.TryParse(parts[2], out var coverFileSize) &&
-                    long.TryParse(parts[3], out var iconFileSize))
+                if (!File.Exists(optimizationCacheFilePath))
                 {
-                    OptimizationCache.Add(new OptimizationCacheItem(gameId, backgroundFileSize, coverFileSize, iconFileSize));
+                    return;
                 }
-                else
+
+                var lines = File.ReadAllLines(optimizationCacheFilePath);
+                foreach (var line in lines)
                 {
-                    Logger.Error($"Failed to parse optimize cache line: {line}");
+                    var parts = line.Split(',');
+
+                    if (parts.Length == 4
+                        && Guid.TryParse(parts[0], out var gameId)
+                        && long.TryParse(parts[1], out var backgroundFileSize)
+                        && long.TryParse(parts[2], out var coverFileSize)
+                        && long.TryParse(parts[3], out var iconFileSize))
+                    {
+                        OptimizationCache[gameId] = new OptimizationCacheItem(gameId, backgroundFileSize, coverFileSize, iconFileSize);
+                    }
+                    else
+                    {
+                        Logger.Error($"Failed to parse optimize cache line: {line}");
+                    }
                 }
             }
         }
@@ -172,12 +181,47 @@ namespace MetadataImageOptimizer.Helpers
         /// </summary>
         public static void Save()
         {
-            lock (OptimizationCache)
+            lock (CacheLock)
             {
+                SaveLocked();
+            }
+        }
+
+        private static long GetFileSizeOrZero(string databaseRelativePath)
+        {
+            if (string.IsNullOrWhiteSpace(databaseRelativePath))
+            {
+                return 0;
+            }
+
+            var fullPath = api.Database.GetFullFilePath(databaseRelativePath);
+            var file = new FileInfo(fullPath);
+            return file.Exists ? file.Length : 0;
+        }
+
+        private static void SaveLocked()
+        {
+            if (string.IsNullOrWhiteSpace(optimizationCacheFilePath))
+            {
+                return;
+            }
+
+            try
+            {
+                var directory = Path.GetDirectoryName(optimizationCacheFilePath);
+                if (!string.IsNullOrEmpty(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
                 File.WriteAllLines(
                     optimizationCacheFilePath
-                    , OptimizationCache.Select(
+                    , OptimizationCache.Values.Select(
                         cacheItem => $"{cacheItem.GameId},{cacheItem.BackgroundFileSize},{cacheItem.CoverFileSize},{cacheItem.IconFileSize}"));
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "Failed to save optimization cache to disk.");
             }
         }
     }

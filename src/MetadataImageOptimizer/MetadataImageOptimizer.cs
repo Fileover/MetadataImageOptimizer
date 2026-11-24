@@ -1,6 +1,7 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -27,9 +28,9 @@ namespace MetadataImageOptimizer
         private readonly IPlayniteAPI api;
         private readonly List<SupportedAddonBase> supportedAddons;
         private readonly ImageOptimizerCli imageOptimizerCli;
+        private readonly ConcurrentDictionary<Guid, byte> inProcessGameIds = new ConcurrentDictionary<Guid, byte>();
 
         private MetadataImageOptimizerSettingsViewModel settingsVm { get; set; }
-        private Guid inProcessGameId;
 
         public override Guid Id { get; } = Guid.Parse("17b571ff-6ffe-4bea-ad25-32e52b54f9d3");
 
@@ -144,32 +145,49 @@ namespace MetadataImageOptimizer
                         && change.OldData.IsInstalling == change.NewData.IsInstalling
                         && change.OldData.IsLaunching == change.NewData.IsLaunching
                         && change.OldData.IsRunning == change.NewData.IsRunning
-                        && change.OldData.IsUninstalling == change.NewData.IsUninstalling)
+                        && change.OldData.IsUninstalling == change.NewData.IsUninstalling
+                        && !inProcessGameIds.ContainsKey(change.NewData.Id))
                 .ToList();
-
-            // Ignore the game we are currently updating
-            gamesToUpdate = gamesToUpdate.Where(change => change.OldData.Id != inProcessGameId)
-                .ToList();
-
-            if (!optimizerSettings.AlwaysOptimizeOnSave)
-            {
-                gamesToUpdate = gamesToUpdate.Where(
-                        change => change.OldData.BackgroundImage != change.NewData.BackgroundImage
-                            || change.OldData.CoverImage != change.NewData.CoverImage
-                            || change.OldData.Icon != change.NewData.Icon)
-                    .ToList();
-            }
 
             if (gamesToUpdate.Count == 0)
             {
                 return;
             }
 
+            // AlwaysOptimizeOnSave is strictly for manual saves in Playnite's Edit Game dialog,
+            // never for automatic library syncs, playtime updates, or install-size scans.
+            var forceAllEnabledSlots = optimizerSettings.AlwaysOptimizeOnSave && IsManualGameEditSave();
+            var hasEnabledAddon = optimizerSettings.AddonSettings.BackgroundChangerOptimize
+                && supportedAddons.Any(x => x.IsInstalled);
+
+            var workItems = new List<OptimizeQueueItem>();
+            foreach (var change in gamesToUpdate)
+            {
+                var backgroundChanged = change.OldData.BackgroundImage != change.NewData.BackgroundImage;
+                var coverChanged = change.OldData.CoverImage != change.NewData.CoverImage;
+                var iconChanged = change.OldData.Icon != change.NewData.Icon;
+
+                var optimizeBackground = optimizerSettings.Background.Optimize && (forceAllEnabledSlots || backgroundChanged);
+                var optimizeCover = optimizerSettings.Cover.Optimize && (forceAllEnabledSlots || coverChanged);
+                var optimizeIcon = optimizerSettings.Icon.Optimize && (forceAllEnabledSlots || iconChanged);
+                var optimizeAddons = hasEnabledAddon && (forceAllEnabledSlots || backgroundChanged || coverChanged);
+
+                if (optimizeBackground || optimizeCover || optimizeIcon || optimizeAddons)
+                {
+                    workItems.Add(new OptimizeQueueItem(change.NewData.Id, optimizeBackground, optimizeCover, optimizeIcon, optimizeAddons));
+                }
+            }
+
+            if (workItems.Count == 0)
+            {
+                return;
+            }
+
             if (optimizerSettings.RunInBackground)
             {
-                foreach (var change in gamesToUpdate)
+                foreach (var item in workItems)
                 {
-                    OptimizeGame(change, optimizerSettings);
+                    QueueOptimizeGame(item.GameId, item.OptimizeBackground, item.OptimizeCover, item.OptimizeIcon, item.OptimizeAddons);
                 }
             }
             else
@@ -177,17 +195,38 @@ namespace MetadataImageOptimizer
                 api.Dialogs.ActivateGlobalProgress(
                     globalProgress =>
                     {
-                        globalProgress.ProgressMaxValue = gamesToUpdate.Count;
+                        globalProgress.ProgressMaxValue = workItems.Count;
 
-                        foreach (var change in gamesToUpdate)
+                        foreach (var item in workItems)
                         {
-                            OptimizeGame(change, optimizerSettings);
-
+                            OptimizeGame(item.GameId, item.OptimizeBackground, item.OptimizeCover, item.OptimizeIcon, item.OptimizeAddons);
                             globalProgress.CurrentProgressValue += 1;
                         }
                     }
-                    , new GlobalProgressOptions("Optimizing game images...", false) { IsIndeterminate = gamesToUpdate.Count == 1 });
+                    , new GlobalProgressOptions("Optimizing game images...", false) { IsIndeterminate = workItems.Count == 1 });
             }
+        }
+
+        private static bool IsManualGameEditSave()
+        {
+            var frames = new StackTrace(false).GetFrames();
+            if (frames == null)
+            {
+                return false;
+            }
+
+            foreach (var frame in frames)
+            {
+                var declaringType = frame.GetMethod()?.DeclaringType?.FullName;
+                if (declaringType != null
+                    && (declaringType.IndexOf("GameEditViewModel", StringComparison.Ordinal) >= 0
+                        || declaringType.IndexOf("GameEditWindow", StringComparison.Ordinal) >= 0))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void OptimizeGames(List<Game> games, MetadataImageOptimizerSettings optimizerSettings)
@@ -197,6 +236,8 @@ namespace MetadataImageOptimizer
                 return;
             }
 
+            var optimizeAddons = optimizerSettings.AddonSettings.BackgroundChangerOptimize
+                && supportedAddons.Any(x => x.IsInstalled);
 
             if (optimizerSettings.RunInBackground)
             {
@@ -206,7 +247,8 @@ namespace MetadataImageOptimizer
                         game.Id
                         , optimizerSettings.Background.Optimize
                         , optimizerSettings.Cover.Optimize
-                        , optimizerSettings.Icon.Optimize);
+                        , optimizerSettings.Icon.Optimize
+                        , optimizeAddons);
                 }
 
                 logger.Info($"Added {games.Count} games to queue.");
@@ -225,7 +267,8 @@ namespace MetadataImageOptimizer
                                 game.Id
                                 , optimizerSettings.Background.Optimize
                                 , optimizerSettings.Cover.Optimize
-                                , optimizerSettings.Icon.Optimize);
+                                , optimizerSettings.Icon.Optimize
+                                , optimizeAddons);
 
                             globalProgress.CurrentProgressValue += 1;
                         }
@@ -234,44 +277,22 @@ namespace MetadataImageOptimizer
             }
         }
 
-        private void OptimizeGame(ItemUpdateEvent<Game> change, MetadataImageOptimizerSettings optimizerSettings)
-        {
-            var game = api.Database.Games[change.NewData.Id];
-
-            var backgroundChanged = optimizerSettings.AlwaysOptimizeOnSave || change.OldData.BackgroundImage != change.NewData.BackgroundImage;
-            var coverChanged = optimizerSettings.AlwaysOptimizeOnSave || change.OldData.CoverImage != change.NewData.CoverImage;
-            var iconChanged = optimizerSettings.AlwaysOptimizeOnSave || change.OldData.Icon != change.NewData.Icon;
-
-            if (backgroundChanged || coverChanged || iconChanged)
-            {
-                if (optimizerSettings.RunInBackground)
-                {
-                    QueueOptimizeGame(game.Id, backgroundChanged, coverChanged, iconChanged);
-                }
-                else
-                {
-                    OptimizeGame(game.Id, backgroundChanged, coverChanged, iconChanged);
-                }
-            }
-        }
-
-        private void OptimizeGame(Guid gameId, bool optimizeBackground, bool optimizeCover, bool optimizeIcon)
+        private void OptimizeGame(Guid gameId, bool optimizeBackground, bool optimizeCover, bool optimizeIcon, bool optimizeAddons = true)
         {
             // The database update at the end of this method raises ItemUpdated for the same game.
             // Without this guard that update would start another optimization of the same images.
-            var previousGameId = inProcessGameId;
-            inProcessGameId = gameId;
+            inProcessGameIds[gameId] = 0;
             try
             {
-                OptimizeGameImages(gameId, optimizeBackground, optimizeCover, optimizeIcon);
+                OptimizeGameImages(gameId, optimizeBackground, optimizeCover, optimizeIcon, optimizeAddons);
             }
             finally
             {
-                inProcessGameId = previousGameId;
+                inProcessGameIds.TryRemove(gameId, out _);
             }
         }
 
-        private void OptimizeGameImages(Guid gameId, bool optimizeBackground, bool optimizeCover, bool optimizeIcon)
+        private void OptimizeGameImages(Guid gameId, bool optimizeBackground, bool optimizeCover, bool optimizeIcon, bool optimizeAddons)
         {
             var pathsChanged = false;
             var optimizerSettings = settingsVm.Settings;
@@ -283,92 +304,101 @@ namespace MetadataImageOptimizer
                 return;
             }
 
-            if (!OptimizationCacheHelper.IsCheckNecessary(game))
+            var checkMainImages = OptimizationCacheHelper.IsCheckNecessary(game);
+            if (!checkMainImages && !optimizeAddons)
             {
                 logger.Debug($"Skipping '{game.Name}'. No change from previously cached information.");
                 return;
             }
 
-            string newBackgroundPath = null;
-            string newCoverPath = null;
-            string newIconPath = null;
-
-            logger.Debug($"Processing '{game.Name}'. Background: {optimizeBackground} | Cover: {optimizeCover} | Icon: {optimizeIcon}");
-            if (optimizeBackground && !string.IsNullOrWhiteSpace(game.BackgroundImage))
+            if (checkMainImages)
             {
-                try
+                string newBackgroundPath = null;
+                string newCoverPath = null;
+                string newIconPath = null;
+
+                logger.Debug($"Processing '{game.Name}'. Background: {optimizeBackground} | Cover: {optimizeCover} | Icon: {optimizeIcon}");
+                if (optimizeBackground && !string.IsNullOrWhiteSpace(game.BackgroundImage))
                 {
-                    var backgroundPath = api.Database.GetFullFilePath(game.BackgroundImage);
-                    newBackgroundPath = ImageOptimizer.Optimize(backgroundPath, optimizerSettings.Background, optimizerSettings.Quality, imageOptimizerCli);
+                    try
+                    {
+                        var backgroundPath = api.Database.GetFullFilePath(game.BackgroundImage);
+                        newBackgroundPath = ImageOptimizer.Optimize(backgroundPath, optimizerSettings.Background, optimizerSettings.Quality, imageOptimizerCli);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Error(ex, $"Error while optimizing background image for '{game.Name}'.");
+                    }
                 }
-                catch (Exception ex)
+
+                if (optimizeCover && !string.IsNullOrWhiteSpace(game.CoverImage))
                 {
-                    logger.Error(ex, $"Error while optimizing background image for '{game.Name}'.");
+                    try
+                    {
+                        var coverPath = api.Database.GetFullFilePath(game.CoverImage);
+                        newCoverPath = ImageOptimizer.Optimize(coverPath, optimizerSettings.Cover, optimizerSettings.Quality, imageOptimizerCli);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Error(ex, $"Error while optimizing cover image for '{game.Name}'.");
+                    }
+                }
+
+                if (optimizeIcon && !string.IsNullOrWhiteSpace(game.Icon))
+                {
+                    try
+                    {
+                        var iconPath = api.Database.GetFullFilePath(game.Icon);
+                        newIconPath = ImageOptimizer.Optimize(iconPath, optimizerSettings.Icon, optimizerSettings.Quality, imageOptimizerCli);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Error(ex, $"Error while optimizing icon for '{game.Name}'.");
+                    }
+                }
+
+                // Ensure we have the latest copy of {game} again in case it changed during the optimization
+                game = api.Database.Games.Get(gameId) ?? game;
+
+                if (newBackgroundPath != null && !string.Equals(newBackgroundPath, api.Database.GetFullFilePath(game.BackgroundImage), StringComparison.OrdinalIgnoreCase))
+                {
+                    PlayniteApi.Database.RemoveFile(game.BackgroundImage);
+                    game.BackgroundImage = api.Database.AddFile(newBackgroundPath, game.Id);
+                    File.Delete(newBackgroundPath);
+                    pathsChanged = true;
+                }
+
+                if (newCoverPath != null && !string.Equals(newCoverPath, api.Database.GetFullFilePath(game.CoverImage), StringComparison.OrdinalIgnoreCase))
+                {
+                    PlayniteApi.Database.RemoveFile(game.CoverImage);
+                    game.CoverImage = api.Database.AddFile(newCoverPath, game.Id);
+                    File.Delete(newCoverPath);
+                    pathsChanged = true;
+                }
+
+                if (newIconPath != null && !string.Equals(newIconPath, api.Database.GetFullFilePath(game.Icon), StringComparison.OrdinalIgnoreCase))
+                {
+                    PlayniteApi.Database.RemoveFile(game.Icon);
+                    game.Icon = api.Database.AddFile(newIconPath, game.Id);
+                    File.Delete(newIconPath);
+                    pathsChanged = true;
                 }
             }
 
-            if (optimizeCover && !string.IsNullOrWhiteSpace(game.CoverImage))
+            if (optimizeAddons)
             {
-                try
-                {
-                    var coverPath = api.Database.GetFullFilePath(game.CoverImage);
-                    newCoverPath = ImageOptimizer.Optimize(coverPath, optimizerSettings.Cover, optimizerSettings.Quality, imageOptimizerCli);
-                }
-                catch (Exception ex)
-                {
-                    logger.Error(ex, $"Error while optimizing cover image for '{game.Name}'.");
-                }
+                supportedAddons.Where(x => x.IsInstalled).ForEach(addon => addon.OptimizeImages(game.Id));
             }
-
-            if (optimizeIcon && !string.IsNullOrWhiteSpace(game.Icon))
-            {
-                try
-                {
-                    var iconPath = api.Database.GetFullFilePath(game.Icon);
-                    newIconPath = ImageOptimizer.Optimize(iconPath, optimizerSettings.Icon, optimizerSettings.Quality, imageOptimizerCli);
-                }
-                catch (Exception ex)
-                {
-                    logger.Error(ex, $"Error while optimizing icon for '{game.Name}'.");
-                }
-            }
-
-            // Ensure we have the latest copy of {game} again in case it changed during the optimization
-            game = api.Database.Games.Get(gameId) ?? game;
-
-            if (newBackgroundPath != null && !string.Equals(newBackgroundPath, api.Database.GetFullFilePath(game.BackgroundImage), StringComparison.OrdinalIgnoreCase))
-            {
-                PlayniteApi.Database.RemoveFile(game.BackgroundImage);
-                game.BackgroundImage = api.Database.AddFile(newBackgroundPath, game.Id);
-                File.Delete(newBackgroundPath);
-                pathsChanged = true;
-            }
-
-            if (newCoverPath != null && !string.Equals(newCoverPath, api.Database.GetFullFilePath(game.CoverImage), StringComparison.OrdinalIgnoreCase))
-            {
-                PlayniteApi.Database.RemoveFile(game.CoverImage);
-                game.CoverImage = api.Database.AddFile(newCoverPath, game.Id);
-                File.Delete(newCoverPath);
-                pathsChanged = true;
-            }
-
-            if (newIconPath != null && !string.Equals(newIconPath, api.Database.GetFullFilePath(game.Icon), StringComparison.OrdinalIgnoreCase))
-            {
-                PlayniteApi.Database.RemoveFile(game.Icon);
-                game.Icon = api.Database.AddFile(newIconPath, game.Id);
-                File.Delete(newIconPath);
-                pathsChanged = true;
-            }
-
-            // Process images from supported addons
-            supportedAddons.Where(x => x.IsInstalled).ForEach(addon => addon.OptimizeImages(game.Id));
 
             if (pathsChanged)
             {
                 api.Database.Games.Update(game);
             }
 
-            OptimizationCacheHelper.Add(game);
+            if (checkMainImages)
+            {
+                OptimizationCacheHelper.Add(game);
+            }
         }
 
         #region Background processing
@@ -377,7 +407,7 @@ namespace MetadataImageOptimizer
         private Thread backgroundOptimizeThread;
         private string BackgroundOptimizeQueueFilePath => Path.Combine(GetPluginUserDataPath(), "optimize-queue");
 
-        private void QueueOptimizeGame(Guid gameId, bool optimizeBackground, bool optimizeCover, bool optimizeIcon)
+        private void QueueOptimizeGame(Guid gameId, bool optimizeBackground, bool optimizeCover, bool optimizeIcon, bool optimizeAddons = true)
         {
             var existingItem = backgroundOptimizeQueue.FirstOrDefault(x => x.GameId == gameId);
             if (existingItem != null)
@@ -385,10 +415,11 @@ namespace MetadataImageOptimizer
                 existingItem.OptimizeBackground |= optimizeBackground;
                 existingItem.OptimizeCover |= optimizeCover;
                 existingItem.OptimizeIcon |= optimizeIcon;
+                existingItem.OptimizeAddons |= optimizeAddons;
             }
             else
             {
-                var queueItem = new OptimizeQueueItem(gameId, optimizeBackground, optimizeCover, optimizeIcon);
+                var queueItem = new OptimizeQueueItem(gameId, optimizeBackground, optimizeCover, optimizeIcon, optimizeAddons);
                 backgroundOptimizeQueue.Enqueue(queueItem);
             }
 
@@ -430,8 +461,7 @@ namespace MetadataImageOptimizer
 
             while (!Environment.HasShutdownStarted && backgroundOptimizeQueue.TryDequeue(out var item))
             {
-                inProcessGameId = item.GameId;
-                OptimizeGame(item.GameId, item.OptimizeBackground, item.OptimizeCover, item.OptimizeIcon);
+                OptimizeGame(item.GameId, item.OptimizeBackground, item.OptimizeCover, item.OptimizeIcon, item.OptimizeAddons);
 
                 if (++handled % 100u == 0u)
                 {
@@ -448,12 +478,10 @@ namespace MetadataImageOptimizer
                         $"Background processing was turned off. Cleared queue of {backgroundOptimizeQueue.Count} items."
                         , "MetadataImageOptimizer - Stopped background processing");
                     ClearBackgroundOptimizeQueue();
-                    inProcessGameId = Guid.Empty;
                     return;
                 }
             }
 
-            inProcessGameId = Guid.Empty;
             SaveBackgroundOptimizeQueueToFile();
         }
 
@@ -479,13 +507,14 @@ namespace MetadataImageOptimizer
             {
                 var parts = line.Split(',');
 
-                if (parts.Length == 4 &&
-                    Guid.TryParse(parts[0], out var gameId) &&
-                    bool.TryParse(parts[1], out var optimizeBackground) &&
-                    bool.TryParse(parts[2], out var optimizeCover) &&
-                    bool.TryParse(parts[3], out var optimizeIcon))
+                if ((parts.Length == 4 || parts.Length == 5)
+                    && Guid.TryParse(parts[0], out var gameId)
+                    && bool.TryParse(parts[1], out var optimizeBackground)
+                    && bool.TryParse(parts[2], out var optimizeCover)
+                    && bool.TryParse(parts[3], out var optimizeIcon))
                 {
-                    backgroundOptimizeQueue.Enqueue(new OptimizeQueueItem(gameId, optimizeBackground, optimizeCover, optimizeIcon));
+                    var optimizeAddons = parts.Length < 5 || !bool.TryParse(parts[4], out var parsedAddons) || parsedAddons;
+                    backgroundOptimizeQueue.Enqueue(new OptimizeQueueItem(gameId, optimizeBackground, optimizeCover, optimizeIcon, optimizeAddons));
                 }
                 else
                 {
@@ -503,7 +532,7 @@ namespace MetadataImageOptimizer
                 File.WriteAllLines(
                     BackgroundOptimizeQueueFilePath
                     , backgroundOptimizeQueue.Select(
-                        queueItem => $"{queueItem.GameId},{queueItem.OptimizeBackground},{queueItem.OptimizeCover},{queueItem.OptimizeIcon}"));
+                        queueItem => $"{queueItem.GameId},{queueItem.OptimizeBackground},{queueItem.OptimizeCover},{queueItem.OptimizeIcon},{queueItem.OptimizeAddons}"));
             }
         }
         #endregion

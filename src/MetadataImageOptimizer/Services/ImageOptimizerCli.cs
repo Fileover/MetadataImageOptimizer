@@ -151,7 +151,9 @@ namespace MetadataImageOptimizer.Services
 
                     if (File.Exists(outputPath))
                     {
-                        return true;
+                        // KeptOriginal copies the source bytes verbatim to outputPath; treat identical
+                        // outputs as unchanged so Playnite does not replace its database file.
+                        return !AreFilesByteIdentical(inputPath, outputPath);
                     }
 
                     // Exit code 0 without output means the tool deliberately kept the original file
@@ -265,13 +267,6 @@ namespace MetadataImageOptimizer.Services
             if (quality.StripMetadata)
             {
                 arguments.Append(" --strip-metadata");
-            }
-
-            if (applyResize)
-            {
-                // A resized image is usually "larger" than nothing, but the resize itself must not
-                // be dropped just because the encoded result is not smaller than the source.
-                arguments.Append(" --keep-larger");
             }
 
             return arguments.ToString();
@@ -395,6 +390,71 @@ namespace MetadataImageOptimizer.Services
 
                 return supportedOptions;
             }
+        }
+
+        private static bool AreFilesByteIdentical(string firstPath, string secondPath)
+        {
+            try
+            {
+                var firstInfo = new FileInfo(firstPath);
+                var secondInfo = new FileInfo(secondPath);
+                if (!firstInfo.Exists || !secondInfo.Exists || firstInfo.Length != secondInfo.Length)
+                {
+                    return false;
+                }
+
+                const int bufferSize = 8192;
+                var firstBuffer = new byte[bufferSize];
+                var secondBuffer = new byte[bufferSize];
+
+                using (var firstStream = File.OpenRead(firstPath))
+                using (var secondStream = File.OpenRead(secondPath))
+                {
+                    while (true)
+                    {
+                        var readFirst = ReadChunk(firstStream, firstBuffer);
+                        var readSecond = ReadChunk(secondStream, secondBuffer);
+                        if (readFirst != readSecond)
+                        {
+                            return false;
+                        }
+
+                        if (readFirst == 0)
+                        {
+                            return true;
+                        }
+
+                        for (var i = 0; i < readFirst; i++)
+                        {
+                            if (firstBuffer[i] != secondBuffer[i])
+                            {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static int ReadChunk(Stream stream, byte[] buffer)
+        {
+            var total = 0;
+            while (total < buffer.Length)
+            {
+                var read = stream.Read(buffer, total, buffer.Length - total);
+                if (read <= 0)
+                {
+                    break;
+                }
+
+                total += read;
+            }
+
+            return total;
         }
 
         private static string Quote(string value)

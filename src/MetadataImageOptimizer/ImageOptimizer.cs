@@ -51,6 +51,7 @@ namespace MetadataImageOptimizer
             {
                 var sourcePath = imagePath;
                 var sourceFormat = ImageFormatDetector.Detect(imagePath);
+                var extractedFromIco = false;
 
                 if (sourceFormat == ImageFormat.Ico)
                 {
@@ -62,6 +63,7 @@ namespace MetadataImageOptimizer
 
                     sourcePath = intermediatePath;
                     sourceFormat = ImageFormat.Png;
+                    extractedFromIco = true;
                 }
 
                 var targetFormat = ResolveTargetFormat(imageSettings.Format, sourceFormat);
@@ -75,8 +77,25 @@ namespace MetadataImageOptimizer
                 var lossless = imageSettings.Lossless
                     && !(targetFormat == TargetFormat.Jpeg && sourceFormat != ImageFormat.Jpeg);
 
+                var resizeSpec = BuildResize(imageSettings);
+                var hasDimensions = ImageFormatDetector.TryGetDimensions(sourcePath, sourceFormat, out var width, out var height);
+                var needsResize = resizeSpec != null
+                    && (!hasDimensions
+                        || (imageSettings.MaxWidth > 0 && width > imageSettings.MaxWidth)
+                        || (imageSettings.MaxHeight > 0 && height > imageSettings.MaxHeight));
+
+                if (!extractedFromIco
+                    && hasDimensions
+                    && !needsResize
+                    && SourceMatchesTarget(sourceFormat, targetFormat.Value)
+                    && IsLossyReencode(sourcePath, targetFormat.Value, lossless, qualitySettings))
+                {
+                    logger.Debug($"Skipping '{imagePath}': already {CliName(targetFormat.Value)} within max dimensions ({width}x{height}).");
+                    return imagePath;
+                }
+
                 var outputPath = CreateTempFilePath(Extension(targetFormat.Value));
-                if (!cli.TryOptimize(sourcePath, outputPath, CliName(targetFormat.Value), lossless, qualitySettings, BuildResize(imageSettings), out var error))
+                if (!cli.TryOptimize(sourcePath, outputPath, CliName(targetFormat.Value), lossless, qualitySettings, needsResize ? resizeSpec : null, out var error))
                 {
                     if (error == null)
                     {
@@ -119,6 +138,43 @@ namespace MetadataImageOptimizer
             var width = maxWidth > 0 ? maxWidth.ToString(CultureInfo.InvariantCulture) : string.Empty;
             var height = maxHeight > 0 ? maxHeight.ToString(CultureInfo.InvariantCulture) : string.Empty;
             return width + "x" + height;
+        }
+
+        private static bool SourceMatchesTarget(ImageFormat sourceFormat, TargetFormat targetFormat)
+        {
+            switch (targetFormat)
+            {
+                case TargetFormat.Jpeg:
+                    return sourceFormat == ImageFormat.Jpeg;
+                case TargetFormat.Png:
+                    return sourceFormat == ImageFormat.Png;
+                case TargetFormat.WebP:
+                    return sourceFormat == ImageFormat.WebP;
+                case TargetFormat.JpegXl:
+                    return sourceFormat == ImageFormat.JpegXl;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool IsLossyReencode(string sourcePath, TargetFormat targetFormat, bool lossless, QualitySettings quality)
+        {
+            if (lossless)
+            {
+                return false;
+            }
+
+            switch (targetFormat)
+            {
+                case TargetFormat.Jpeg:
+                    return true;
+                case TargetFormat.WebP:
+                    return ImageFormatDetector.IsLossyWebP(sourcePath);
+                case TargetFormat.JpegXl:
+                    return quality != null && quality.JxlDistance > 0d;
+                default:
+                    return false;
+            }
         }
 
         private static TargetFormat? ResolveTargetFormat(string format, ImageFormat sourceFormat)
